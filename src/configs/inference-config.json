@@ -1,0 +1,14 @@
+{
+  "pad": false,
+  "batch_size": 1,
+  "num_classes": 2,
+  "augmented": false,
+  "model": "max-mil",
+  "target_shape": null,
+  "loss": "focal-loss",
+  "grad_accumulated": true,
+  "feature_extractor": "UNI",
+  "embedding_type": "isolated",
+  "resnet_normalization_method": null,
+  "weights": "highest-balanced-accuracy.pth"
+}

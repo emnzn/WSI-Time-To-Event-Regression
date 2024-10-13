@@ -1,0 +1,24 @@
+{
+    "pad": false,
+    "augment": false,
+    "target_shape": null,
+    "loss": "focal-loss",
+    "alpha": [0.79746835, 1.34042553],
+    "gamma": 2,
+    "embedding_type": "stitched",
+    "event": "recur",
+    "seed": 42,
+    "epochs": 20,
+    "split_num": 1,
+    "batch_size": 8,
+    "num_classes": 1,
+    "eta_min": 1.0e-6,
+    "learning_rate": 1.0e-4,
+    "feature_extractor": "UNI",
+    "weight_decay": 1.0e-5,
+    "label_smoothing": 0.0,
+    "swin_dropout_probability": null,
+    "model": "attention-mil",
+    "resnet_normalization_method": null
+}
+  

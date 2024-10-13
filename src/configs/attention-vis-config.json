@@ -1,0 +1,16 @@
+{
+    "pad": false,
+    "batch_size": 1,
+    "num_classes": 2,
+    "augmented": false,
+    "model": "attention-mil",
+    "target_shape": null,
+    "patch_shape": 64,
+    "grad_accumulated": true,
+    "feature_extractor": "UNI",
+    "embedding_type": "isolated",
+    "experiment_num": 0,
+    "resnet_normalization_method": null,
+    "weights": "highest-balanced-accuracy.pth"
+  }
+  
