@@ -1,5 +1,5 @@
 import os
-from typing import Tuple, Union, Dict, Any
+from typing import Tuple, Union
 
 import torch
 import numpy as np
@@ -8,14 +8,15 @@ from tqdm import tqdm
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from lifelines.utils import concordance_index
 from torch.utils.tensorboard import SummaryWriter
-from sklearn.metrics import balanced_accuracy_score, f1_score
+from sksurv.metrics import concordance_index_censored
 
 from utils import (
     WSIDataset, get_args, save_args, get_save_dirs,
     get_model, set_seed, ResNet, SwinTransformer,
     AttentionBasedMIL, get_training_checkpoint,
-    get_criterion
+    RankDeepSurvLoss
 )
 
 def train(
@@ -23,87 +24,54 @@ def train(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     model: Union[ResNet, SwinTransformer, AttentionBasedMIL],
-    attenion_mil: bool,
+    attention_mil: bool,
     device: str,
     grad_accumulation: int
-    ) -> Tuple[float, float, float]:
+    ) -> Tuple[float, float]:
 
     """
     Trains the model for one epoch.
-
-    Parameters
-    ----------
-    dataloader: DataLoader
-        The data loader to iterate over.
-
-    criterion: nn.Module
-        The loss function.
-
-    optimizer: optim.Optimizer
-        The optimizer for parameter updates.
-
-    model: Union[ResNet, SwinTransformer, AttentionBasedMIL]
-        The model to be trained.
-
-    attenion_mil: bool
-        Whether training under an Attention-based Multiple-Instance Learning scheme.
-        This is used because the Attenion-Based MIL model returns the 
-        attention weights placed on each instance.
-
-    device: str
-        One of [cuda, cpu].
-
-    grad_accumulation: int
-        The number of gradient accumulation steps before performing gradient descent.
-
-    Returns
-    -------
-    epoch_loss: float
-        The average loss for the given epoch.
-
-    epoch_f1: float
-        The average weighted f1 for the given epoch.
-
-    epoch_balanced_accuracy: float
-        The average balanced accuracy for the given epoch.    
     """
 
     metrics = {
         "running_loss": 0,
-        "predictions": [],
-        "targets": []
+        "times": [],
+        "events": [],
+        "predictions": []
     }
 
     model.train()
-    for i, (wsi_embedding, target, _) in enumerate(tqdm(dataloader, desc="Training in progress")):
+    for i, (wsi_embedding, time, event, _) in enumerate(tqdm(dataloader, desc="Training in progress")):
         wsi_embedding = wsi_embedding.to(device)
-        target = target.to(device)
+        time = time.float().to(device)
+        event = event.float().to(device)
 
-        if attenion_mil:
-            logits, _ = model(wsi_embedding)
+        if attention_mil:
+            pred, _ = model(wsi_embedding)
 
         else:
-            logits = model(wsi_embedding)
+            pred = model(wsi_embedding)
 
-        loss = criterion(logits, target) / grad_accumulation
+        loss = criterion(pred, time, event)
         loss.backward()
 
         if (i + 1) % grad_accumulation == 0 or (i + 1) == len(dataloader):
             optimizer.step()
             optimizer.zero_grad()
 
-        confidence = F.softmax(logits, dim=1)
-        pred = torch.argmax(confidence, dim=1)
-
         metrics["running_loss"] += loss.detach().cpu().item()
-        metrics["predictions"].extend(pred.cpu().numpy())
-        metrics["targets"].extend(target.cpu().numpy())
+        metrics["times"].extend(time.cpu().numpy())
+        metrics["events"].extend(event.cpu().numpy())
+        metrics["predictions"].extend(pred.squeeze().detach().cpu().numpy())
 
-    epoch_loss = metrics["running_loss"] / (len(dataloader) / grad_accumulation)
-    epoch_f1 = f1_score(metrics["targets"], metrics["predictions"], average="weighted")
-    epoch_balanced_accuracy = balanced_accuracy_score(metrics["targets"], metrics["predictions"])
+    times = np.array(metrics["times"])
+    events = np.array(metrics["events"]).astype(bool)
+    estimated_risk = -np.array(metrics["predictions"])
 
-    return epoch_loss, epoch_f1, epoch_balanced_accuracy
+    epoch_loss = metrics["running_loss"] / len(dataloader)
+    c_index = concordance_index(times, estimated_risk, events)
+
+    return epoch_loss, c_index
 
 
 @torch.no_grad()
@@ -111,50 +79,54 @@ def validate(
     dataloader: DataLoader,
     criterion: nn.Module,
     model: Union[ResNet, SwinTransformer, AttentionBasedMIL],
-    attenion_mil: bool,
-    device: str
-    ) -> Tuple[float, float, float]:
+    attention_mil: bool,
+    device: str,
+    ) -> Tuple[float, float]:
 
     """
     Runs validation for a single epoch.
     """
-    
+
     metrics = {
         "running_loss": 0,
-        "predictions": [],
-        "targets": []
+        "times": [],
+        "events": [],
+        "predictions": []
     }
 
     model.eval()
-    for wsi_embedding, target, _ in tqdm(dataloader, desc="Validation in progess"):
+    for wsi_embedding, time, event, _ in tqdm(dataloader, desc="Validation in progress"):
         wsi_embedding = wsi_embedding.to(device)
-        target = target.to(device)
+        time = time.float().to(device)
+        event = event.float().to(device)
 
-        if attenion_mil: 
-            logits, _ = model(wsi_embedding)
+        if attention_mil:
+            pred, _ = model(wsi_embedding)
 
-        else: 
-            logits = model(wsi_embedding)
+        else:
+            pred = model(wsi_embedding)
 
-        loss = criterion(logits, target)
-        confidence = F.softmax(logits, dim=1)
-        pred = torch.argmax(confidence, dim=1)
+        loss = criterion(pred, time, event)
 
         metrics["running_loss"] += loss.detach().cpu().item()
-        metrics["predictions"].extend(pred.cpu().numpy())
-        metrics["targets"].extend(target.cpu().numpy())
+        metrics["times"].extend(time.cpu().numpy())
+        metrics["events"].extend(event.cpu().numpy())
+        metrics["predictions"].extend(pred.squeeze().detach().cpu().numpy())
+
+    times = np.array(metrics["times"])
+    events = np.array(metrics["events"]).astype(bool)
+    estimated_risk = -np.array(metrics["predictions"])
 
     epoch_loss = metrics["running_loss"] / len(dataloader)
-    epoch_f1 = f1_score(metrics["targets"], metrics["predictions"], average="weighted")
-    epoch_balanced_accuracy = balanced_accuracy_score(metrics["targets"], metrics["predictions"])
-    
-    return epoch_loss, epoch_f1, epoch_balanced_accuracy
+    c_index = concordance_index(times, estimated_risk, events)
+
+    return epoch_loss, c_index
 
 
 def main():
     config_dir = os.path.join("configs", "train-config.json")
     args = get_args(config_dir)
-    attenion_mil = True if args["model"] == "attention-mil" else False
+    attention_mil = True if args["model"] == "attention-mil" else False
     
     root_data_dir = os.path.join("..", "data", args["feature_extractor"], args["embedding_type"], f"split-{args['split_num']}")
     train_dir = os.path.join(root_data_dir, "train")
@@ -169,10 +141,30 @@ def main():
     
     os.makedirs(model_dir, exist_ok=True)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "mps"
 
-    train_dataset = WSIDataset(train_dir, label_dir, attenion_mil, args["pad"], args["augment"], args["embedding_type"], args["target_shape"])
-    val_dataset = WSIDataset(val_dir, label_dir, attenion_mil, args["pad"], False, args["embedding_type"], args["target_shape"])
+    train_dataset = WSIDataset(
+        train_dir, 
+        label_dir, 
+        attention_mil, 
+        args["pad"], 
+        args["event"],
+        args["augment"], 
+        args["embedding_type"], 
+        args["target_shape"]
+        )
+    
+    val_dataset = WSIDataset(
+        val_dir, 
+        label_dir, 
+        attention_mil, 
+        args["pad"], 
+        args["event"],
+        False, 
+        args["embedding_type"], 
+        args["target_shape"]
+        )
 
     train_loader = DataLoader(train_dataset, batch_size=args["batch_size"], shuffle=True)
     val_loader = DataLoader(val_dataset, batch_size=args["batch_size"], shuffle=False)
@@ -180,49 +172,55 @@ def main():
     model, save_base_name = get_model(args)
     model = model.to(device)
     
-    train_criterion, val_criterion = get_criterion(args)
+    criterion = RankDeepSurvLoss(alpha=args["alpha"], beta=args["beta"])
     optimizer = optim.AdamW(model.parameters(), lr=args["learning_rate"], weight_decay=args["weight_decay"])
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, args["epochs"], eta_min=args["eta_min"])
 
     min_val_loss = np.inf
-    max_val_balanced_accuracy = -np.inf
+    max_val_c_index = -np.inf
 
     for epoch in range(1, args["epochs"] + 1):
         writer.add_scalar("Learning Rate", scheduler.optimizer.param_groups[0]["lr"], epoch)
         print(f"Epoch [{epoch}/{args['epochs']}]")
 
-        train_loss, train_f1, train_balanced_accuracy = train(
-            dataloader=train_loader, criterion=train_criterion, optimizer=optimizer, 
-            attenion_mil=attenion_mil, model=model, device=device, grad_accumulation=args["grad_accumulation"]
+        train_loss, train_c_index = train(
+            dataloader=train_loader, 
+            criterion=criterion, 
+            optimizer=optimizer, 
+            attention_mil=attention_mil, 
+            model=model, device=device, 
+            grad_accumulation=args["grad_accumulation"]
             )
 
         print("\nTrain Statistics:")
-        print(f"Loss: {train_loss:.4f} | F1 score: {train_f1:.4f} | Balanced Accuracy: {train_balanced_accuracy:.4f}\n")
+        print(f"Loss: {train_loss:.4f} | C-Index: {train_c_index:.4f}\n")
 
         writer.add_scalar("Train/Loss", train_loss, epoch)
-        writer.add_scalar("Train/F1", train_f1, epoch)
-        writer.add_scalar("Train/Balanced-Accuracy", train_balanced_accuracy, epoch)
+        writer.add_scalar("Train/C-Index", train_c_index, epoch)
 
-        val_loss, val_f1, val_balanced_accuracy = validate(
-            dataloader=val_loader, criterion=val_criterion, model=model, attenion_mil=attenion_mil, device=device
+        val_loss, val_c_index = validate(
+            dataloader=val_loader, 
+            criterion=criterion, 
+            model=model, 
+            attention_mil=attention_mil, 
+            device=device
             )
         
         print("\nValidation Statistics:")
-        print(f"Loss: {val_loss:.4f} | F1 Score: {val_f1:.4f} | Balanced Accuracy: {val_balanced_accuracy:.4f}\n")
+        print(f"Loss: {val_loss:.4f} | C-Index: {val_c_index:.4f}\n")
 
         writer.add_scalar("Validation/Loss", val_loss, epoch)
-        writer.add_scalar("Validation/F1", val_f1, epoch)
-        writer.add_scalar("Validation/Balanced-Accuracy", val_balanced_accuracy, epoch)
+        writer.add_scalar("Validation/C-Index", val_c_index, epoch)
 
         if val_loss < min_val_loss:
             torch.save(model.state_dict(), os.path.join(model_dir, f"{save_base_name}-lowest-loss.pth"))
             min_val_loss = val_loss
             print("New minimum loss — model saved.")
 
-        if val_balanced_accuracy > max_val_balanced_accuracy:
-            torch.save(model.state_dict(), os.path.join(model_dir, f"{save_base_name}-highest-balanced-accuracy.pth"))
-            max_val_balanced_accuracy = val_balanced_accuracy
-            print("New maximum balanced accuracy — model saved.")
+        if val_c_index > max_val_c_index:
+            torch.save(model.state_dict(), os.path.join(model_dir, f"{save_base_name}-highest-C-Index.pth"))
+            max_val_c_index = val_c_index
+            print("New maximum C-Index — model saved.")
 
         if epoch % 5 == 0:
             checkpoint = get_training_checkpoint(epoch, model, optimizer, scheduler)

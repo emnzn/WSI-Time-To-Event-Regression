@@ -33,7 +33,6 @@ class CoxPHLoss(nn.Module):
         loss = -anchor_loss.sum() / N
 
         return loss
-    
 
 
 class RankDeepSurvLoss(nn.Module):
@@ -53,6 +52,8 @@ class RankDeepSurvLoss(nn.Module):
         self.mse = nn.MSELoss(reduction="none")
 
     def _l1_loss(self, pred, time, event):
+        pred = pred.squeeze()
+
         mse = self.mse(pred, time)
         mask = (event == 1) | ((event == 0) & (pred <= time))
         l1_loss = mse[mask].sum() / event.shape[0]
@@ -60,16 +61,25 @@ class RankDeepSurvLoss(nn.Module):
         return l1_loss
     
     def _l2_loss(self, pred, time, event):
-        time_diff = time.unsqueeze(1) - time.unsqueeze(0)
-        pred_diff = pred.unsqueeze(1) - pred.unsqueeze(0)
+        pred = pred.squeeze()
+        time_i = time.unsqueeze(1)
+        time_j = time.unsqueeze(0)
+
+        pred_i = pred.unsqueeze(1)
+        pred_j = pred.unsqueeze(0)
+
+        time_diff = time_j - time_i
+        pred_diff = pred_j - pred_i
 
         event_i = event.unsqueeze(1)
         event_j = event.unsqueeze(0)
 
-        comp_matrix = (event_i == 1) & ((event_j == 1) | (((event_i == 1) & (event_j == 0)) & (time_diff <= 0)))
+        comp_matrix = (
+            ((event_j == 1) & (event_i == 1)) | 
+            ((event_j == 0) & (event_i == 1) & (event_i <= event_j))
+        ) & (time_diff > pred_diff)
 
         mse = self.mse(time_diff, pred_diff)
-
         l2_loss = mse[comp_matrix].sum() / event.shape[0]
 
         return l2_loss
