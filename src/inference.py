@@ -5,7 +5,6 @@ import torch
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from lifelines.utils import concordance_index
 
@@ -59,7 +58,7 @@ def inference(
 
     times = np.array(metrics["times"])
     events = np.array(metrics["events"]).astype(bool)
-    estimated_risk = -np.array(metrics["predictions"])
+    estimated_risk = np.array(metrics["predictions"])
 
     epoch_loss = metrics["running_loss"] / len(dataloader)
     c_index = concordance_index(times, estimated_risk, events)
@@ -90,12 +89,20 @@ def main():
         label_dir = os.path.join("..", "data", "labels.csv")
         model_dir = os.path.join(base_model_dir, f"split-{split_num}")
         save_dir = os.path.join(base_save_dir, f"split-{split_num}")
-
         os.makedirs(save_dir, exist_ok=True)
-
+      
         device = "cuda" if torch.cuda.is_available() else "cpu"
-
-        inference_dataset = WSIDataset(inference_dir, label_dir, attention_mil, args["pad"], False, args["embedding_type"], args["target_shape"])
+        inference_dataset = WSIDataset(
+            inference_dir, 
+            label_dir, 
+            attention_mil, 
+            args["pad"], 
+            args["event"],
+            args["augmented"], 
+            args["embedding_type"], 
+            args["target_shape"]
+            )
+        
         inference_loader = DataLoader(inference_dataset, batch_size=args["batch_size"], shuffle=False)
 
         model, save_base_name = get_model(args)

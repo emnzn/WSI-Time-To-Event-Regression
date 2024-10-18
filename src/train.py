@@ -6,11 +6,9 @@ import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
 import torch.optim as optim
-import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from lifelines.utils import concordance_index
 from torch.utils.tensorboard import SummaryWriter
-from sksurv.metrics import concordance_index_censored
 
 from utils import (
     WSIDataset, get_args, save_args, get_save_dirs,
@@ -66,7 +64,7 @@ def train(
 
     times = np.array(metrics["times"])
     events = np.array(metrics["events"]).astype(bool)
-    estimated_risk = -np.array(metrics["predictions"])
+    estimated_risk = np.array(metrics["predictions"])
 
     epoch_loss = metrics["running_loss"] / len(dataloader)
     c_index = concordance_index(times, estimated_risk, events)
@@ -115,7 +113,7 @@ def validate(
 
     times = np.array(metrics["times"])
     events = np.array(metrics["events"]).astype(bool)
-    estimated_risk = -np.array(metrics["predictions"])
+    estimated_risk = np.array(metrics["predictions"])
 
     epoch_loss = metrics["running_loss"] / len(dataloader)
     c_index = concordance_index(times, estimated_risk, events)
@@ -141,8 +139,7 @@ def main():
     
     os.makedirs(model_dir, exist_ok=True)
 
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
-    device = "mps"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     train_dataset = WSIDataset(
         train_dir, 
