@@ -12,7 +12,8 @@ from utils import (
     WSIDataset, get_args, save_results, 
     get_save_dirs, get_model, ResNet, 
     SwinTransformer, BaseMIL, 
-    AttentionBasedMIL, RankDeepSurvLoss
+    AttentionBasedMIL, RankDeepSurvLoss,
+    CoxPHLoss
 )
 
 @torch.no_grad()
@@ -27,18 +28,17 @@ def inference(
     ) -> Tuple[float, float]:
 
     """
-    Trains the model for one epoch.
+    Runs inference.
     """
 
-    metrics = {
-        "running_loss": 0,
-        "times": [],
-        "events": [],
-        "predictions": []
+    accumulation_table = {
+        "times": torch.tensor([], dtype=torch.float32).to(device),
+        "events": torch.tensor([], dtype=torch.float32).to(device),
+        "predictions": torch.tensor([], dtype=torch.float32).to(device)
     }
 
     model.eval()
-    for wsi_embedding, time, event, _ in tqdm(dataloader, desc="Validation in progress"):
+    for wsi_embedding, time, event, _ in tqdm(dataloader, desc="Inference in progress"):
         wsi_embedding = wsi_embedding.to(device)
         time = time.float().to(device)
         event = event.float().to(device)
@@ -49,20 +49,23 @@ def inference(
         else:
             pred = model(wsi_embedding)
 
-        loss = criterion(pred, time, event)
+        accumulation_table["times"] = torch.cat([accumulation_table["times"], time])
+        accumulation_table["events"] = torch.cat([accumulation_table["events"], event])
+        accumulation_table["predictions"] = torch.cat([accumulation_table["predictions"], pred])
 
-        metrics["running_loss"] += loss.detach().cpu().item()
-        metrics["times"].extend(time.cpu().numpy())
-        metrics["events"].extend(event.cpu().numpy())
-        metrics["predictions"].extend(pred.squeeze().detach().cpu().numpy())
+    time = accumulation_table["times"]
+    event = accumulation_table["events"]
+    pred = accumulation_table["predictions"]
 
-    times = np.array(metrics["times"])
-    events = np.array(metrics["events"]).astype(bool)
-    estimated_risk = np.array(metrics["predictions"])
+    epoch_loss = criterion(pred, time, event)
 
-    epoch_loss = metrics["running_loss"] / len(dataloader)
+    times = time.cpu().numpy()
+    events = event.cpu().numpy().astype(bool)
+    estimated_risk = pred.cpu().numpy()
+
     c_index = concordance_index(times, estimated_risk, events)
 
+    metrics = {"times": times, "events": events, "predictions": "predictions"}
     save_results(metrics, save_dir, save_filename)
 
     return epoch_loss, c_index
@@ -112,7 +115,12 @@ def main():
         weights = torch.load(weights_dir, map_location=torch.device(device), weights_only=True)
         model.load_state_dict(weights)
 
-        criterion = RankDeepSurvLoss(alpha=args["alpha"], beta=args["beta"])
+        if args["loss"] == "rank-deep-surv":
+            criterion = RankDeepSurvLoss(alpha=args["alpha"], beta=args["beta"])
+        
+
+        elif args["loss"] == "cox-ph":
+            criterion = CoxPHLoss()
 
         split_loss, split_c_index = inference(
             dataloader=inference_loader, 

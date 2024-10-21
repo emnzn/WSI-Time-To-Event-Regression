@@ -14,7 +14,7 @@ from utils import (
     WSIDataset, get_args, save_args, get_save_dirs,
     get_model, set_seed, ResNet, SwinTransformer,
     AttentionBasedMIL, get_training_checkpoint,
-    RankDeepSurvLoss
+    RankDeepSurvLoss, CoxPHLoss
 )
 
 def train(
@@ -24,7 +24,7 @@ def train(
     model: Union[ResNet, SwinTransformer, AttentionBasedMIL],
     attention_mil: bool,
     device: str,
-    grad_accumulation: int
+    loss_accumulation: int
     ) -> Tuple[float, float]:
 
     """
@@ -36,6 +36,12 @@ def train(
         "times": [],
         "events": [],
         "predictions": []
+    }
+
+    accumulation_table = {
+        "times": torch.tensor([], dtype=torch.float32).to(device),
+        "events": torch.tensor([], dtype=torch.float32).to(device),
+        "predictions": torch.tensor([], dtype=torch.float32).to(device)
     }
 
     model.train()
@@ -50,17 +56,33 @@ def train(
         else:
             pred = model(wsi_embedding)
 
-        loss = criterion(pred, time, event)
-        loss.backward()
+        accumulation_table["times"] = torch.cat([accumulation_table["times"], time])
+        accumulation_table["events"] = torch.cat([accumulation_table["events"], event])
+        accumulation_table["predictions"] = torch.cat([accumulation_table["predictions"], pred])
 
-        if (i + 1) % grad_accumulation == 0 or (i + 1) == len(dataloader):
-            optimizer.step()
-            optimizer.zero_grad()
+        if (i + 1) % loss_accumulation == 0 or (i + 1) == len(dataloader):
 
-        metrics["running_loss"] += loss.detach().cpu().item()
-        metrics["times"].extend(time.cpu().numpy())
-        metrics["events"].extend(event.cpu().numpy())
-        metrics["predictions"].extend(pred.squeeze().detach().cpu().numpy())
+            time = accumulation_table["times"]
+            event = accumulation_table["events"]
+            pred = accumulation_table["predictions"]
+
+            loss = criterion(pred, time, event)
+            if not torch.isnan(loss):
+                loss.backward()
+
+                optimizer.step()
+                optimizer.zero_grad()
+
+                accumulation_table = {
+                    "times": torch.tensor([], dtype=torch.float32).to(device),
+                    "events": torch.tensor([], dtype=torch.float32).to(device),
+                    "predictions": torch.tensor([], dtype=torch.float32).to(device)
+                }
+
+                metrics["running_loss"] += loss.detach().cpu().item()
+                metrics["times"].extend(time.cpu().numpy())
+                metrics["events"].extend(event.cpu().numpy())
+                metrics["predictions"].extend(pred.squeeze().detach().cpu().numpy())
 
     times = np.array(metrics["times"])
     events = np.array(metrics["events"]).astype(bool)
@@ -85,11 +107,10 @@ def validate(
     Runs validation for a single epoch.
     """
 
-    metrics = {
-        "running_loss": 0,
-        "times": [],
-        "events": [],
-        "predictions": []
+    accumulation_table = {
+        "times": torch.tensor([], dtype=torch.float32).to(device),
+        "events": torch.tensor([], dtype=torch.float32).to(device),
+        "predictions": torch.tensor([], dtype=torch.float32).to(device)
     }
 
     model.eval()
@@ -104,18 +125,20 @@ def validate(
         else:
             pred = model(wsi_embedding)
 
-        loss = criterion(pred, time, event)
+        accumulation_table["times"] = torch.cat([accumulation_table["times"], time])
+        accumulation_table["events"] = torch.cat([accumulation_table["events"], event])
+        accumulation_table["predictions"] = torch.cat([accumulation_table["predictions"], pred])
 
-        metrics["running_loss"] += loss.detach().cpu().item()
-        metrics["times"].extend(time.cpu().numpy())
-        metrics["events"].extend(event.cpu().numpy())
-        metrics["predictions"].extend(pred.squeeze().detach().cpu().numpy())
+    time = accumulation_table["times"]
+    event = accumulation_table["events"]
+    pred = accumulation_table["predictions"]
 
-    times = np.array(metrics["times"])
-    events = np.array(metrics["events"]).astype(bool)
-    estimated_risk = np.array(metrics["predictions"])
+    epoch_loss = criterion(pred, time, event)
 
-    epoch_loss = metrics["running_loss"] / len(dataloader)
+    times = time.cpu().numpy()
+    events = event.cpu().numpy().astype(bool)
+    estimated_risk = pred.cpu().numpy()
+
     c_index = concordance_index(times, estimated_risk, events)
 
     return epoch_loss, c_index
@@ -163,13 +186,19 @@ def main():
         args["target_shape"]
         )
 
-    train_loader = DataLoader(train_dataset, batch_size=args["batch_size"], shuffle=True)
-    val_loader = DataLoader(val_dataset, batch_size=args["batch_size"], shuffle=False)
-
     model, save_base_name = get_model(args)
     model = model.to(device)
     
-    criterion = RankDeepSurvLoss(alpha=args["alpha"], beta=args["beta"])
+    if args["loss"] == "rank-deep-surv":
+        criterion = RankDeepSurvLoss(alpha=args["alpha"], beta=args["beta"])
+        train_loader = DataLoader(train_dataset, batch_size=args["batch_size"], shuffle=True)
+
+    elif args["loss"] == "cox-ph":
+        criterion = CoxPHLoss()
+        train_loader = DataLoader(train_dataset, batch_size=args["batch_size"], shuffle=False)
+
+    val_loader = DataLoader(val_dataset, batch_size=args["batch_size"], shuffle=False)
+
     optimizer = optim.AdamW(model.parameters(), lr=args["learning_rate"], weight_decay=args["weight_decay"])
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, args["epochs"], eta_min=args["eta_min"])
 
@@ -186,7 +215,7 @@ def main():
             optimizer=optimizer, 
             attention_mil=attention_mil, 
             model=model, device=device, 
-            grad_accumulation=args["grad_accumulation"]
+            loss_accumulation=args["loss_accumulation"]
             )
 
         print("\nTrain Statistics:")

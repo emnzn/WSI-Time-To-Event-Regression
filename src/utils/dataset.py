@@ -26,10 +26,10 @@ class WSIDataset(Dataset):
 
         self.data_dir = data_dir
         self.filenames = os.listdir(data_dir)
+        self.event = event
         self.labels = self.generate_labels(label_dir)
         self.attenion_mil = attenion_mil
         self.pad = pad
-        self.event = event
         self.augment = augment
         self.embedding_type = embedding_type
         self.target_shape = target_shape
@@ -45,19 +45,49 @@ class WSIDataset(Dataset):
             ])
         
         reference_ids = set([patient_id for _, patient_id in self.labels["id"].items()])
-
         assert all([Path(i).stem in reference_ids for i in self.filenames]), "All patient ids must have a label"
 
     def generate_labels(self, label_dir: str) -> Dict[str, str]:
 
         """
         Creates a dictionary containing the patient ids as keys
-        and the associated Meningioma grade as the values.
+        and the associated time-to-event information as the values.
         """
 
         labels = pd.read_csv(label_dir)
+        valid_ids = [Path(patient_id).stem for patient_id in self.filenames]
+        valid_cols = ["id", self.event, f"time-to-{self.event}"]
 
-        labels = labels.to_dict()
+        labels = labels[labels["id"].isin(valid_ids)][valid_cols]
+        labels[f"time-to-{self.event}"] = labels[f"time-to-{self.event}"].map(lambda x: abs(x))
+        data_dict = {col: [] for col in valid_cols}
+
+        majority_class = labels[labels[self.event] == 0]
+        minority_class = labels[labels[self.event] == 1]
+
+        total_samples = len(labels)
+        num_minority = len(minority_class)
+
+        insertion_idx = total_samples // num_minority
+
+        for i in range(total_samples):
+            if i % insertion_idx == 0 and len(minority_class) > 0:
+                sample = minority_class.iloc[-1]
+                minority_class = minority_class[:-1]
+
+                data_dict["id"].append(sample["id"])
+                data_dict[self.event].append(sample[self.event])
+                data_dict[f"time-to-{self.event}"].append(sample[f"time-to-{self.event}"])
+
+            else:
+                sample = majority_class.iloc[-1]
+                majority_class = majority_class.iloc[:-1]
+
+                data_dict["id"].append(sample["id"])
+                data_dict[self.event].append(sample[self.event])
+                data_dict[f"time-to-{self.event}"].append(sample[f"time-to-{self.event}"])
+
+        labels = pd.DataFrame(data_dict)
 
         return labels
     
@@ -93,12 +123,13 @@ class WSIDataset(Dataset):
         return len(self.filenames)
     
     def __getitem__(self, idx):
-        filename = self.filenames[idx]
-        patient_id = Path(filename).stem
+        sample = self.labels.iloc[idx]
+        patient_id = sample["id"]
+        filename = f"{patient_id}.npy"
 
-        event = self.labels[self.event][idx]
+        event = sample[self.event]
         time_to_event_key = f"time-to-{self.event}"
-        time = self.labels[time_to_event_key][idx]
+        time = sample[time_to_event_key]
 
         embedding_path = os.path.join(self.data_dir, filename)
 

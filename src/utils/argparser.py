@@ -55,11 +55,10 @@ def save_args(log_dir: str, args: Dict[str, Union[float, str]]):
             "num_classes": args["num_classes"],
             "learning_rate": args["learning_rate"],
             "feature_extractor": args["feature_extractor"],
-            "grad_accumulation": args["grad_accumulation"]
+            "loss_accumulation": args["loss_accumulation"]
         },
         "regularization": {
             "weight_decay": args["weight_decay"],
-            "label_smoothing": args["label_smoothing"],
             "swin_dropout_probability": args["swin_dropout_probability"]
         },
         "model": {
@@ -79,13 +78,13 @@ def get_save_dirs(
     
     if mode == "train":
         if args["embedding_type"] == "isolated":
-            if args["grad_accumulation"] > 1:
-                model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "grad-accumulation", f"split-{args['split_num']}")
-                log_dir = os.path.join("runs", args["embedding_type"], args["loss"], "grad-accumulation", f"split-{args['split_num']}", args["model"])
+            if args["loss_accumulation"] > 1:
+                model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "loss-accumulation", f"split-{args['split_num']}")
+                log_dir = os.path.join("runs", args["embedding_type"], args["loss"], "loss-accumulation", f"split-{args['split_num']}", args["model"])
 
             else:
-                model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "no-grad-accumulation", f"split-{args['split_num']}")
-                log_dir = os.path.join("runs", args["embedding_type"], args["embedding_type"], "grad-accumulation", f"split-{args['split_num']}", args["model"])
+                model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "no-loss-accumulation", f"split-{args['split_num']}")
+                log_dir = os.path.join("runs", args["embedding_type"], args["embedding_type"], "no-loss-accumulation", f"split-{args['split_num']}", args["model"])
 
 
         elif args["embedding_type"] == "stitched":
@@ -102,13 +101,13 @@ def get_save_dirs(
     
     if mode == "inference":
         if args["embedding_type"] == "isolated":
-            if args["grad_accumulated"]:
-                base_model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "grad-accumulation")
-                base_save_dir = os.path.join("..", "assets", "inference-results", args["embedding_type"], "grad-accumulation")
+            if args["loss_accumulated"]:
+                base_model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "loss-accumulation")
+                base_save_dir = os.path.join("..", "assets", "inference-results", args["embedding_type"], "loss-accumulation")
 
             else:
-                base_model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "no-grad-accumulation")
-                base_save_dir = os.path.join("..", "assets", "inference-results", args["embedding_type"], args["loss"], "no-grad-accumulation")
+                base_model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "no-loss-accumulation")
+                base_save_dir = os.path.join("..", "assets", "inference-results", args["embedding_type"], args["loss"], "no-loss-accumulation")
 
         elif args["embedding_type"] == "stitched":
             if args["augmented"]:
