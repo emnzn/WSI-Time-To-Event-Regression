@@ -2,14 +2,14 @@
     "pad": false,
     "alpha": 1.0,
     "beta": 1.0,
-    "augment": false,
+    "augment": true,
     "target_shape": null,
-    "loss": "rank-deep-surv",
+    "loss": "cox-ph",
     "embedding_type": "isolated",
     "event": "recur",
     "seed": 42,
     "epochs": 20,
-    "split_num": 5,
+    "split_num": 4,
     "batch_size": 1,
     "num_classes": 1,
     "eta_min": 1.0e-6,
@@ -18,7 +18,7 @@
     "feature_extractor": "UNI",
     "weight_decay": 1.0e-5,
     "swin_dropout_probability": null,
-    "model": "attention-mil",
-    "resnet_normalization_method": null
+    "model": "mean-mil",
+    "resnet_normalization_method": "batch"
 }
   

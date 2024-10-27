@@ -1,12 +1,10 @@
 {
   "pad": false,
-  "alpha": 1.0,
-  "beta": 1.0,
   "batch_size": 1,
   "event": "recur",
   "num_classes": 1,
   "augmented": false,
-  "model": "attention-mil",
+  "model": "mean-mil",
   "target_shape": null,
   "loss": "rank-deep-surv",
   "loss_accumulated": true,
