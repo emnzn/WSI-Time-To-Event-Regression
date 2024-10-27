@@ -116,7 +116,7 @@ def main():
         model.load_state_dict(weights)
 
         if args["loss"] == "rank-deep-surv":
-            criterion = RankDeepSurvLoss(alpha=args["alpha"], beta=args["beta"])
+            criterion = RankDeepSurvLoss(alpha=1.0, beta=1.0)
         
 
         elif args["loss"] == "cox-ph":
@@ -142,9 +142,10 @@ def main():
 
     average_loss = sum(losses) / len(losses)
     average_c_index = sum(c_indices) / len(c_indices)
+    c_index_std = np.std(c_indices)
 
     print("Summary:")
-    print(f"Loss: {average_loss:.4f} | C-Index: {average_c_index:.4f}\n")
+    print(f"Loss: {average_loss:.4f} | C-Index: {average_c_index:.4f} | C-Index STD: {c_index_std:.4f}\n")
 
 
 if __name__ == "__main__":
