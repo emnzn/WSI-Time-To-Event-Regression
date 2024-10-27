@@ -89,8 +89,8 @@ def get_save_dirs(
 
         elif args["embedding_type"] == "stitched":
             if args["augment"]:
-                model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], "aug", f"split-{args['split_num']}")
-                log_dir = os.path.join("runs", args["embedding_type"], "aug", f"split-{args['split_num']}", args["model"])
+                model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "aug", f"split-{args['split_num']}")
+                log_dir = os.path.join("runs", args["embedding_type"], args["loss"], "aug", f"split-{args['split_num']}", args["model"])
 
             else:
                 model_dir = os.path.join("..", "assets", "model-weights", args["embedding_type"], args["loss"], "no-aug", f"split-{args['split_num']}")
